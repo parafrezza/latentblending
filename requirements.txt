@@ -1,6 +1,7 @@
 lpips==0.1.4
 opencv-python
-diffusers==0.25.0
+diffusers>=0.36.0
 transformers
 pytest
 accelerate
+lunar_tools @ git+https://github.com/lunarring/lunar_tools.git#egg=lunar_tools

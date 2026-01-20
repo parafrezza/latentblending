@@ -131,3 +131,6 @@ dmypy.json
 
 # Moviez
 *.mp4
+blend_output/*
+source/*
+output_folder/*

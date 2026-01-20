@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +27,19 @@ def _load_and_prepare_image(path, size, multiple=32):
         target_h = _round_to_multiple(orig_h, multiple)
 
     if (target_w, target_h) != (orig_w, orig_h):
-        img = img.resize((target_w, target_h), resample=Image.LANCZOS)
+        # Preserve aspect ratio: scale to cover target, then center-crop to target size.
+        scale = max(target_w / orig_w, target_h / orig_h)
+        resized_w = max(target_w, int(math.ceil(orig_w * scale)))
+        resized_h = max(target_h, int(math.ceil(orig_h * scale)))
+
+        img = img.resize((resized_w, resized_h), resample=Image.LANCZOS)
+
+        if (resized_w, resized_h) != (target_w, target_h):
+            left = (resized_w - target_w) // 2
+            top = (resized_h - target_h) // 2
+            right = left + target_w
+            bottom = top + target_h
+            img = img.crop((left, top, right, bottom))
 
     return img, (orig_w, orig_h), (target_w, target_h)
 
@@ -57,12 +72,15 @@ def main():
     parser.add_argument("--image1", required=True, help="Path to first image.")
     parser.add_argument("--image2", required=True, help="Path to second image.")
     parser.add_argument("--output-dir", default="preprocessed", help="Directory to store outputs.")
-    parser.add_argument("--model", default="stabilityai/sdxl-turbo", help="Diffusers model id.")
+    parser.add_argument("--model", default="stabilityai/stable-diffusion-xl-base-1.0", help="Diffusers model id (use turbo for speed: stabilityai/sdxl-turbo).")
     parser.add_argument("--size", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                         help="Optional resize target (must be multiples of 32).")
     parser.add_argument("--ask-to-blend", action="store_true",
                         help="Prompt the user to proceed with blending after success.")
     args = parser.parse_args()
+
+# launch with: python preprocess_images.py --image1 path/to/img1.png --image2 path/to/img2.png --output-dir output_folder --size 512 512 --ask-to-blend
+# launch with:  python preprocess_images.py --image1 ./source/lr2.jpg --image2 ./source/lr1.jpg --output-dir output_folder --size 512 512 --ask-to-blend
 
     img1_path = Path(args.image1)
     img2_path = Path(args.image2)
@@ -133,12 +151,32 @@ def main():
     print(f"- latent2: {latent2_out}")
 
     if args.ask_to_blend:
-        reply = input("Vuoi usare queste immagini convertite per avviare il blending? (y/N): ").strip().lower()
+        reply = input("Vuoi avviare subito il blending con questi latenti? (y/N): ").strip().lower()
         if reply in {"y", "yes"}:
-            print("Perfetto. Tieni a portata di mano il manifest:")
-            print(f"  {meta_path}")
-            print("Nel prossimo step possiamo collegare questi latenti al blending engine.")
+            blend_script = Path(__file__).parent / "blend_from_images.py"
+            cmd = [
+                sys.executable,
+                str(blend_script),
+                "--manifest",
+                str(meta_path),
+            ]
+            print("Lancio:", " ".join(cmd))
+            try:
+                subprocess.run(cmd, check=True)
+            except subprocess.CalledProcessError as exc:
+                print("Blending terminato con errore:", exc)
+            else:
+                print("Blending completato.")
 
 
 if __name__ == "__main__":
     main()
+
+
+# nuovo venv con python 3.12
+# py -3.12 -m venv venv
+# .\venv\Scripts\python.exe -m pip install --upgrade pip
+# .\venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
+# .\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 
