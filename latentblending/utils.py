@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import torch
+# automatic device selection (cuda → mps → cpu) for macOS and others
 torch.backends.cudnn.benchmark = False
 import numpy as np
 import warnings
@@ -23,6 +24,20 @@ import warnings
 import datetime
 from typing import List, Union
 torch.set_grad_enabled(False)
+
+
+def get_device() -> str:
+    """Return the most capable device available on this machine.
+
+    Prioritises CUDA when available, then Apple's MPS backend on newer Mac
+    hardware, and finally falls back to the CPU.  
+    """
+    if torch.cuda.is_available():
+        return "cuda"
+    # MPS support requires both compile-time and run-time availability
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return "mps"
+    return "cpu"
 import yaml
 import PIL
 

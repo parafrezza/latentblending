@@ -40,6 +40,29 @@ We can launch the a user-interface version with:
 python latentblending/gradio_ui.py
 ```
 
+## Command‑line image tools
+The previous two scripts have been merged into one multifunction utility
+`preprocess_images.py` which now supports three subcommands:
+
+```bash
+# encode two JPEGs and save latents
+python preprocess_images.py preprocess --image1 a.jpg --image2 b.png
+
+# blend from a manifest (same as the old `blend_from_images.py`)
+python preprocess_images.py blend --manifest preprocessed/preprocess_manifest.json
+
+# do both steps in a single invocation
+python preprocess_images.py all --image1 a.jpg --image2 b.png --mp4 transition.mp4
+```
+
+A lightweight wrapper named `blend_from_images.py` still exists for
+backwards compatibility but prints a deprecation warning.
+
+`images_to_transition.py` is also kept as a compatibility wrapper and now
+forwards to `preprocess_images.py`.
+
+Device selection is now automatic in CLI/UI: `cuda -> mps (macOS Apple Silicon) -> cpu`.
+
 With the UI, you can iteratively generate your desired keyframes, and then render the movie with latent blending it at the end.
 
 ## Example 1: Simple transition
@@ -149,5 +172,9 @@ With latent blending, we can create transitions that appear to defy the laws of 
 Stay tuned on twitter: ```@j_stelzer```
 
 Contact: ```stelzer@lunar-ring.ai``` (Johannes Stelzer)
+
+---
+
+📝 For a concise summary of the most recent commits and some ideas for next steps, see `COMMIT_SUMMARY.md` in the project root.
 
 

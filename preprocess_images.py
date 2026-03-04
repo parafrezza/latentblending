@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
+# TODO: research a macOS-compatible pipeline for diffusers (xref user request)
+# TODO: consider a future mode that reads a folder of images, sorts them
+#       alphabetically, and blends them in sequence with intermediate steps.
 import argparse
 import json
 import math
 import subprocess
 import sys
 from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 from PIL import Image
 from diffusers import AutoPipelineForText2Image
+import cv2
+
+from latentblending.diffusers_holder import DiffusersHolder
+from latentblending.utils import interpolate_spherical, interpolate_linear
+from latentblending.utils import get_device
 
 
 def _round_to_multiple(value, multiple):
@@ -66,23 +75,74 @@ def _encode_latent(pipe, img):
 
     return latents
 
+def _load_latent(path, device):
+    latent = torch.load(path, map_location="cpu")
+    if not torch.is_tensor(latent):
+        raise ValueError(f"Latent at {path} is not a torch tensor.")
+    return latent.to(device=device)
 
-def main():
-    parser = argparse.ArgumentParser(description="Preprocess two images and save VAE latents.")
-    parser.add_argument("--image1", required=True, help="Path to first image.")
-    parser.add_argument("--image2", required=True, help="Path to second image.")
-    parser.add_argument("--output-dir", default="preprocessed", help="Directory to store outputs.")
-    parser.add_argument("--model", default="stabilityai/stable-diffusion-xl-base-1.0", help="Diffusers model id (use turbo for speed: stabilityai/sdxl-turbo).")
-    parser.add_argument("--size", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
-                        help="Optional resize target (must be multiples of 32).")
-    parser.add_argument("--ask-to-blend", action="store_true",
-                        help="Prompt the user to proceed with blending after success.")
-    args = parser.parse_args()
 
-# launch with: python preprocess_images.py --image1 path/to/img1.png --image2 path/to/img2.png --output-dir output_folder --size 512 512 --ask-to-blend
-# launch with:  python preprocess_images.py --image1 ./source/lr2.jpg --image2 ./source/lr1.jpg --output-dir output_folder --size 512 512 --ask-to-blend
+def cmd_blend(args):
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"manifest not found: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text())
 
-    img1_path = Path(args.image1)
+    model_id = args.model or manifest.get("model", "stabilityai/sdxl-turbo")
+    latent1_path = Path(manifest["image1"]["latent_path"])
+    latent2_path = Path(manifest["image2"]["latent_path"])
+    if not latent1_path.is_file():
+        raise FileNotFoundError(f"latent1 not found: {latent1_path}")
+    if not latent2_path.is_file():
+        raise FileNotFoundError(f"latent2 not found: {latent2_path}")
+
+    device = get_device()
+    dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
+    pipe = AutoPipelineForText2Image.from_pretrained(
+        model_id, torch_dtype=dtype, variant="fp16"
+    )
+    pipe.to(device)
+    dh = DiffusersHolder(pipe)
+
+    latent1 = _load_latent(latent1_path, device)
+    latent2 = _load_latent(latent2_path, device)
+    if latent1.shape != latent2.shape:
+        raise ValueError(f"Latent shapes do not match: {latent1.shape} vs {latent2.shape}")
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fracts = torch.linspace(0, 1, args.num_frames)
+    writer = None
+    for i, f in enumerate(fracts):
+        if args.interpolation == "slerp":
+            latent = interpolate_spherical(latent1, latent2, float(f))
+        else:
+            latent = interpolate_linear(latent1, latent2, float(f))
+        img = dh.latent2image(latent)
+        img.save(out_dir / f"frame_{i:04d}.png")
+        if args.mp4 is not None:
+            if writer is None:
+                w, h = img.size
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(str(args.mp4), fourcc, args.fps, (w, h))
+            frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            writer.write(frame)
+
+    if writer is not None:
+        writer.release()
+
+    print("Blend completed.")
+    print(f"- frames: {args.num_frames}")
+    print(f"- output: {out_dir}")
+    if args.mp4 is not None:
+        print(f"- mp4: {args.mp4}")
+
+
+def cmd_preprocess(args):
+    # previous preprocessing logic moved here
+    # (args already holds the necessary attributes)
+    img1_path = Path(args.image1)  # this function will be used by main directly
     img2_path = Path(args.image2)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -105,10 +165,12 @@ def main():
     if min(img1_final + img2_final) < 32:
         raise ValueError("Images are too small after resizing; minimum size is 32x32.")
 
+    device = get_device()
+    dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
     pipe = AutoPipelineForText2Image.from_pretrained(
-        args.model, torch_dtype=torch.float16, variant="fp16"
+        args.model, torch_dtype=dtype, variant="fp16"
     )
-    pipe.to("cuda" if torch.cuda.is_available() else "cpu")
+    pipe.to(device)
 
     latent1 = _encode_latent(pipe, img1).detach().cpu()
     latent2 = _encode_latent(pipe, img2).detach().cpu()
@@ -167,6 +229,61 @@ def main():
                 print("Blending terminato con errore:", exc)
             else:
                 print("Blending completato.")
+
+
+def main():
+    # backward-compatible alias (historical invocation style)
+    if "-all" in sys.argv:
+        sys.argv[sys.argv.index("-all")] = "all"
+
+    parser = argparse.ArgumentParser(description="Preprocess/blend images.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    pre = sub.add_parser("preprocess", help="Encode two images to latents.")
+    pre.add_argument("--image1", required=True)
+    pre.add_argument("--image2", required=True)
+    pre.add_argument("--output-dir", default="preprocessed")
+    pre.add_argument("--model", default="stabilityai/sdxl-turbo")
+    pre.add_argument("--size", nargs=2, type=int)
+    pre.add_argument("--ask-to-blend", action="store_true")
+    pre.set_defaults(func=cmd_preprocess)
+    bl = sub.add_parser("blend", help="Blend using a manifest.")
+    bl.add_argument("--manifest", default="preprocessed/preprocess_manifest.json")
+    bl.add_argument("--output-dir", default="blend_from_images")
+    bl.add_argument("--num-frames", type=int, default=16)
+    bl.add_argument("--interpolation", choices=["slerp","linear"], default="slerp")
+    bl.add_argument("--mp4")
+    bl.add_argument("--fps", type=int, default=30)
+    bl.add_argument("--model")
+    bl.set_defaults(func=cmd_blend)
+    allp = sub.add_parser("all", help="preprocess then blend")
+    allp.add_argument("--image1", required=True)
+    allp.add_argument("--image2", required=True)
+    allp.add_argument("--output-dir", default="preprocessed")
+    allp.add_argument("--model", default="stabilityai/sdxl-turbo")
+    allp.add_argument("--size", nargs=2, type=int)
+    allp.add_argument("--num-frames", type=int, default=16)
+    allp.add_argument("--interpolation", choices=["slerp","linear"], default="slerp")
+    allp.add_argument("--mp4")
+    allp.add_argument("--fps", type=int, default=30)
+    allp.set_defaults(func=cmd_all)
+    args = parser.parse_args()
+    args.func(args)
+
+
+def cmd_all(args):
+    # run both steps in sequence
+    cmd_preprocess(args)
+    manifest_path = Path(args.output_dir) / "preprocess_manifest.json"
+    blend_args = argparse.Namespace(
+        manifest=str(manifest_path),
+        output_dir=(Path(args.output_dir) / "blend_from_images").as_posix(),
+        num_frames=args.num_frames,
+        interpolation=args.interpolation,
+        mp4=args.mp4,
+        fps=args.fps,
+        model=args.model,
+    )
+    cmd_blend(blend_args)
 
 
 if __name__ == "__main__":

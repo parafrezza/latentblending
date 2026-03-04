@@ -129,8 +129,12 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Moviez
+# Mediazzz
 *.mp4
 blend_output/*
 source/*
 output_folder/*
+*.jpg
+*.jpeg
+*.png
+*.webp

@@ -12,6 +12,7 @@ import shutil
 import uuid
 from diffusers import AutoPipelineForText2Image
 from latentblending.blending_engine import BlendingEngine
+from latentblending.utils import get_device
 import datetime
 import tempfile
 import json
@@ -39,9 +40,11 @@ class MultiUserRouter():
 
     def init_models(self):
         self.dict_blendingengines = {}
+        device = get_device()
+        dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
         for m in self.list_models:
-            pipe = AutoPipelineForText2Image.from_pretrained(m, torch_dtype=torch.float16, variant="fp16")
-            pipe.to("cuda")
+            pipe = AutoPipelineForText2Image.from_pretrained(m, torch_dtype=dtype, variant="fp16")
+            pipe.to(device)
             be = BlendingEngine(pipe, do_compile=self.do_compile)
             
             self.dict_blendingengines[m] = be
