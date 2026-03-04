@@ -24,6 +24,23 @@ be.write_movie_transition('movie_example1.mp4', duration_transition=12)
 # Installation
 ```commandline
 pip install git+https://github.com/lunarring/latentblending
+
+per windows con python version > 3.13:
+
+# opzionale: elimina il vecchio venv
+Remove-Item -Recurse -Force .\venv
+
+# crea venv con Python 3.13
+py -3.13 -m venv venv
+.\venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip setuptools wheel
+
+# workaround encoding Windows
+$env:PYTHONUTF8='1'
+
+pip install -r requirements.txt
+
 ```
 
 # Extra speedup with stable_fast compile
@@ -40,8 +57,11 @@ We can launch the a user-interface version with:
 python latentblending/gradio_ui.py
 ```
 
+
+
+rickmod:
 ## Command‑line image tools
-The previous two scripts have been merged into one multifunction utility
+The previous two scripts to blend non latent images have been merged into one multifunction utility
 `preprocess_images.py` which now supports three subcommands:
 
 ```bash
@@ -52,7 +72,7 @@ python preprocess_images.py preprocess --image1 a.jpg --image2 b.png
 python preprocess_images.py blend --manifest preprocessed/preprocess_manifest.json
 
 # do both steps in a single invocation
-python preprocess_images.py all --image1 a.jpg --image2 b.png --mp4 transition.mp4
+python preprocess_images.py all --image1 "sources/forest/01.jpg" --image2 "sources/forest/02.jpg" --mp4 forest.mp4
 ```
 
 A lightweight wrapper named `blend_from_images.py` still exists for
